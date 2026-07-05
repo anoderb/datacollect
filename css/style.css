@@ -48,6 +48,7 @@ body {
   color: var(--text-primary);
   line-height: 1.5;
   overflow-x: hidden;
+  padding-top: var(--header-height); /* Prevent content overlap on mobile */
   padding-bottom: calc(var(--bottom-nav-height) + 20px); /* Space for bottom nav on mobile */
 }
 
@@ -1045,4 +1046,25 @@ h1, h2, h3, h4, h5, h6 {
   background: var(--accent-color);
   width: 0%;
   transition: width 0.2s ease-out;
+}
+
+/* Custom mobile sticky camera styles */
+@media (max-width: 767px) {
+  .camera-section {
+    position: sticky;
+    top: var(--header-height);
+    z-index: 50;
+    background: var(--bg-primary);
+    padding: 10px 16px;
+    margin-left: -16px;
+    margin-right: -16px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--glass-border);
+  }
+  
+  .camera-container {
+    aspect-ratio: 3/4 !important;
+    max-height: 52vh;
+    border-radius: 16px;
+  }
 }

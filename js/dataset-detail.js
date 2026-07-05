@@ -284,7 +284,6 @@ function createLocalPreviewCard(id, localUrl) {
     </div>
   `;
   thumbnailGrid.appendChild(card);
-  card.scrollIntoView({ behavior: 'smooth', block: 'end' });
 }
 
 function updateLocalPreviewCardSuccess(tempId, photoRecord) {
