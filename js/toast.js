@@ -1,8 +1,5 @@
 /**
- * Menampilkan pesan toast yang melayang di layar
- * @param {string} message - Pesan yang ingin ditampilkan
- * @param {'success'|'error'|'info'|'warning'} type - Jenis notifikasi
- * @returns {object} Kontroler toast untuk memperbarui atau menghapus toast secara manual
+ * Modul Toast Notification sederhana untuk memberikan umpan balik visual ke pengguna.
  */
 export function showToast(message, type = 'info') {
   const container = document.getElementById('toast-container');
@@ -11,7 +8,7 @@ export function showToast(message, type = 'info') {
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
   
-  // Icon based on type
+  // Ambil icon svg berdasarkan tipe
   function getIcon(t) {
     if (t === 'success') {
       return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`;
@@ -31,21 +28,23 @@ export function showToast(message, type = 'info') {
 
   container.appendChild(toast);
 
-  let autoRemoveTimeout = setTimeout(() => {
+  let removeTimeout = setTimeout(() => {
     removeToast();
-  }, 4000);
+  }, 3500);
 
   function removeToast() {
-    if (autoRemoveTimeout) {
-      clearTimeout(autoRemoveTimeout);
-      autoRemoveTimeout = null;
+    if (removeTimeout) {
+      clearTimeout(removeTimeout);
+      removeTimeout = null;
     }
     toast.classList.add('removing');
-    const onAnimationEnd = () => {
+    
+    // Tunggu animasi slide out selesai baru di-remove
+    const onTransitionEnd = () => {
       toast.remove();
-      toast.removeEventListener('animationend', onAnimationEnd);
+      toast.removeEventListener('animationend', onTransitionEnd);
     };
-    toast.addEventListener('animationend', onAnimationEnd);
+    toast.addEventListener('animationend', onTransitionEnd);
   }
 
   return {

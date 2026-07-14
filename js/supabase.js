@@ -21,7 +21,6 @@ export async function getDatasets() {
  * Membuat dataset baru
  */
 export async function createDataset(name) {
-  // Generate slug sederhana (Lowercase, ganti spasi/karakter khusus dengan tanda minus)
   const slug = name
     .toLowerCase()
     .trim()
@@ -63,8 +62,7 @@ export async function updateDataset(id, name) {
 
 /**
  * Menghapus dataset berdasarkan ID
- * Menghapus data di DB akan memicu cascade deletion untuk semua baris photos yang terkait.
- * PERHATIAN: Foto di Supabase Storage harus dibersihkan secara manual di script pemanggil.
+ * Database cascade deletion akan otomatis menghapus catatan foto terkait.
  */
 export async function deleteDataset(id) {
   const { error } = await supabase
@@ -88,6 +86,21 @@ export async function getPhotos(datasetId) {
 
   if (error) throw error;
   return data;
+}
+
+/**
+ * Mengambil foto terakhir dari dataset tertentu (untuk thumbnail)
+ */
+export async function getLatestPhoto(datasetId) {
+  const { data, error } = await supabase
+    .from('photos')
+    .select('*')
+    .eq('dataset_id', datasetId)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (error) throw error;
+  return data && data.length > 0 ? data[0] : null;
 }
 
 /**
@@ -124,4 +137,19 @@ export async function deletePhotoRecord(id) {
 
   if (error) throw error;
   return true;
+}
+
+/**
+ * Update photo count dataset secara manual jika diperlukan di DB (opsional)
+ */
+export async function updateDatasetPhotoCount(datasetId, count) {
+  const { data, error } = await supabase
+    .from('datasets')
+    .update({ photo_count: count, updated_at: new Date().toISOString() })
+    .eq('id', datasetId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
 }

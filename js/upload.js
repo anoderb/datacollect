@@ -1,7 +1,7 @@
-import { supabase, addPhotoRecord, deletePhotoRecord, getPhotos } from './supabase.js';
+import { supabase, addPhotoRecord, deletePhotoRecord, getPhotos, updateDatasetPhotoCount } from './supabase.js';
 
 /**
- * Menghitung nomor urut foto berikutnya untuk penamaan teratur
+ * Menghitung nama file dan nomor urut foto berikutnya untuk penamaan teratur
  * Format: {slug}_{3-digit-seq}.jpg (Contoh: indomie-goreng_001.jpg)
  */
 export async function getNextFileName(datasetId, datasetSlug) {
@@ -46,64 +46,122 @@ export async function getNextFileName(datasetId, datasetSlug) {
 }
 
 /**
- * Mengunggah gambar ke Supabase Storage dan menambahkan datanya ke database
+ * Mengunggah satu foto terproses dan thumbnail terkait ke Supabase Storage,
+ * serta menambahkan catatan metadatanya ke database PostgreSQL.
  */
-export async function uploadPhoto({ datasetId, datasetSlug, imageBlob, width, height }) {
-  const { fileName } = await getNextFileName(datasetId, datasetSlug);
-  const storagePath = `${datasetSlug}/${fileName}`;
+export async function uploadSinglePhoto({ datasetId, datasetSlug, processedBlob, thumbnail, width, height, fileName }) {
+  // Jika fileName belum dispesifikasi, generate otomatis secara urut
+  let finalFileName = fileName;
+  if (!finalFileName) {
+    const fileInfo = await getNextFileName(datasetId, datasetSlug);
+    finalFileName = fileInfo.fileName;
+  }
 
-  // 1. Upload ke Supabase Storage
-  const { data: storageData, error: storageError } = await supabase.storage
+  const storagePath = `${datasetSlug}/${finalFileName}`;
+  const thumbnailPath = `${datasetSlug}/thumbnails/${finalFileName}`;
+
+  // 1. Upload foto utama ke Storage
+  const { error: storageError } = await supabase.storage
     .from('dataset-photos')
-    .upload(storagePath, imageBlob, {
+    .upload(storagePath, processedBlob, {
       contentType: 'image/jpeg',
       upsert: true
     });
 
   if (storageError) throw storageError;
 
-  // 2. Simpan metadata foto ke database PostgreSQL
+  // 2. Upload thumbnail ke Storage (opsional, jika ada)
+  if (thumbnail) {
+    try {
+      await supabase.storage
+        .from('dataset-photos')
+        .upload(thumbnailPath, thumbnail, {
+          contentType: 'image/jpeg',
+          upsert: true
+        });
+    } catch (thumbErr) {
+      console.warn('Gagal upload thumbnail, melanjutkan penyimpanan gambar utama.', thumbErr);
+    }
+  }
+
+  // 3. Simpan metadata foto ke PostgreSQL
   try {
     const dbRecord = await addPhotoRecord({
       datasetId,
-      fileName,
+      fileName: finalFileName,
       storagePath,
-      fileSize: imageBlob.size,
+      fileSize: processedBlob.size,
       width,
       height
     });
 
-    // Ambil Public URL untuk ditampulkan
+    // 4. Update photo_count di tabel datasets secara sinkron
+    const photos = await getPhotos(datasetId);
+    await updateDatasetPhotoCount(datasetId, photos.length);
+
+    // Ambil Public URL untuk dikembalikan
     const { data: publicUrlData } = supabase.storage
       .from('dataset-photos')
       .getPublicUrl(storagePath);
 
+    const { data: thumbUrlData } = supabase.storage
+      .from('dataset-photos')
+      .getPublicUrl(thumbnailPath);
+
     return {
       ...dbRecord,
-      publicUrl: publicUrlData.publicUrl
+      publicUrl: publicUrlData.publicUrl,
+      thumbnailUrl: thumbUrlData.publicUrl
     };
   } catch (dbError) {
-    // Rollback storage upload jika penyimpanan database gagal
-    await supabase.storage.from('dataset-photos').remove([storagePath]);
+    // Rollback file storage jika database insert gagal
+    await supabase.storage.from('dataset-photos').remove([storagePath, thumbnailPath]);
     throw dbError;
   }
 }
 
 /**
- * Menghapus foto dari Supabase Storage dan database PostgreSQL
+ * Menghapus foto dari Supabase Storage (utama & thumbnail) dan database PostgreSQL
  */
 export async function deletePhoto(photoId, storagePath) {
-  // 1. Hapus catatan di database terlebih dahulu (agar UI segera merespons)
+  // Parsing datasetId dari path atau query record
+  // Dapatkan detail record foto terlebih dahulu untuk mengetahui dataset_id
+  let datasetId = null;
+  try {
+    const { data } = await supabase
+      .from('photos')
+      .select('dataset_id')
+      .eq('id', photoId)
+      .single();
+    if (data) {
+      datasetId = data.dataset_id;
+    }
+  } catch (e) {
+    console.warn('Gagal mendapatkan dataset_id dari photo record.', e);
+  }
+
+  // 1. Hapus catatan di database
   await deletePhotoRecord(photoId);
 
-  // 2. Hapus file fisik dari Supabase Storage
+  // 2. Hapus file fisik dan thumbnail dari Supabase Storage
+  const thumbnailPath = storagePath.replace(/([^/]+)$/, 'thumbnails/$1');
+  
   const { error: storageError } = await supabase.storage
     .from('dataset-photos')
-    .remove([storagePath]);
+    .remove([storagePath, thumbnailPath]);
 
   if (storageError) {
-    // Logging saja jika file storage gagal dihapus tetapi DB sudah hilang
     console.error(`Gagal menghapus file storage: ${storagePath}`, storageError);
+  }
+
+  // 3. Update jumlah foto di tabel datasets agar tersinkronisasi
+  if (datasetId) {
+    try {
+      const photos = await getPhotos(datasetId);
+      await updateDatasetPhotoCount(datasetId, photos.length);
+    } catch (e) {
+      console.warn('Gagal sinkronisasi photo_count setelah hapus foto.', e);
+    }
   }
 
   return true;

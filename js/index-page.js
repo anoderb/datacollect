@@ -1,5 +1,6 @@
-import { supabase, getDatasets, createDataset, updateDataset, deleteDataset } from './supabase.js';
+import { getDatasets, createDataset, updateDataset, deleteDataset, getLatestPhoto, supabase } from './supabase.js';
 import { downloadDatasetZip, downloadAllDatasetsZip } from './download.js';
+import { showConfirm } from './confirm.js';
 import { showToast } from './toast.js';
 
 // State global halaman utama
@@ -36,7 +37,29 @@ const modalCloseBtn = document.getElementById('modal-close-btn');
 async function loadData() {
   renderLoadingState();
   try {
-    allDatasets = await getDatasets();
+    const datasets = await getDatasets();
+    
+    // Tambahkan link ke thumbnail terakhir untuk tiap dataset secara async paralel
+    allDatasets = await Promise.all(
+      datasets.map(async (dataset) => {
+        try {
+          const latestPhoto = await getLatestPhoto(dataset.id);
+          let thumbnailUrl = null;
+          if (latestPhoto) {
+            // Ambil public url dari storage
+            const { data } = supabase.storage
+              .from('dataset-photos')
+              .getPublicUrl(latestPhoto.storage_path);
+            thumbnailUrl = data?.publicUrl;
+          }
+          return { ...dataset, thumbnailUrl };
+        } catch (e) {
+          console.warn(`Gagal mengambil thumbnail untuk dataset ${dataset.name}:`, e);
+          return { ...dataset, thumbnailUrl: null };
+        }
+      })
+    );
+
     filteredDatasets = [...allDatasets];
     renderDatasets();
   } catch (error) {
@@ -60,7 +83,7 @@ function renderLoadingState() {
     <div class="empty-state">
       <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="loading-spinner"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>
       <h3>Memuat dataset...</h3>
-      <p>Sedang mengambil data dari Supabase.</p>
+      <p>Sedang menghubungkan ke Supabase database.</p>
     </div>
   `;
 }
@@ -78,7 +101,7 @@ function renderErrorState(message) {
 }
 
 function renderDatasets() {
-  // Update dataset counter badge
+  // Update badge jumlah dataset
   datasetSummary.querySelector('span').textContent = allDatasets.length;
 
   if (filteredDatasets.length === 0) {
@@ -101,14 +124,22 @@ function renderDatasets() {
     card.className = 'glass-card dataset-card';
     card.setAttribute('data-id', dataset.id);
     
-    // Format tanggal update
+    // Format timestamp
     const updateDate = new Date(dataset.updated_at).toLocaleDateString('id-ID', {
       day: 'numeric',
       month: 'short',
       year: 'numeric'
     });
 
+    // Markup thumbnail: render gambar jika ada, atau default icon kamera
+    const thumbnailMarkup = dataset.thumbnailUrl
+      ? `<img src="${dataset.thumbnailUrl}" alt="${dataset.name}" loading="lazy">`
+      : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>`;
+
     card.innerHTML = `
+      <div class="dataset-card-thumbnail">
+        ${thumbnailMarkup}
+      </div>
       <div class="dataset-info-header">
         <div class="dataset-name">${escapeHTML(dataset.name)}</div>
         <div class="photo-badge">
@@ -190,6 +221,13 @@ function setupEventListeners() {
   // Mass downloads
   downloadAllBtn.addEventListener('click', handleDownloadAllZip);
   downloadAllMobileBtn.addEventListener('click', handleDownloadAllZip);
+
+  // Refresh data ketika navigasi bottom nav Home di-klik
+  navHome.addEventListener('click', () => {
+    navHome.classList.add('active');
+    navAddDataset.classList.remove('active');
+    loadData();
+  });
 }
 
 /* ==========================================================================
@@ -207,6 +245,9 @@ function handleSearch(e) {
 
 // Modal: Open Create
 function openCreateModal() {
+  navHome.classList.remove('active');
+  navAddDataset.classList.add('active');
+
   modalTitle.textContent = 'Tambah Dataset';
   datasetIdInput.value = '';
   datasetNameInput.value = '';
@@ -227,6 +268,8 @@ function openEditModal(dataset) {
 function closeModal() {
   datasetModal.classList.remove('open');
   datasetForm.reset();
+  navHome.classList.add('active');
+  navAddDataset.classList.remove('active');
 }
 
 // Form Submit (Create or Update)
@@ -262,30 +305,51 @@ async function handleFormSubmit(e) {
   }
 }
 
-// Delete Dataset with Confirmation
+// Delete Dataset with custom glassmorphism modal confirm
 async function handleDeleteDataset(dataset) {
-  const confirmMessage = `Apakah Anda yakin ingin menghapus dataset "${dataset.name}"?\n\nTindakan ini akan menghapus dataset dan SEMUA (${dataset.photo_count}) foto di dalamnya secara permanen dari database.`;
-  
-  if (!confirm(confirmMessage)) return;
+  const confirmed = await showConfirm({
+    title: 'Hapus Dataset',
+    message: `Apakah Anda yakin ingin menghapus dataset "${dataset.name}"?<br><br>Tindakan ini akan menghapus dataset dan seluruh (${dataset.photo_count}) foto di dalamnya secara permanen dari Storage dan Database.`,
+    confirmText: 'Hapus Permanen',
+    isDanger: true
+  });
 
-  const toast = showToast('Menghapus data di database dan file storage...', 'info');
+  if (!confirmed) return;
+
+  const toast = showToast('Menghapus file storage...', 'info');
 
   try {
-    // 1. Bersihkan file storage terlebih dahulu sebelum database cascade
-    // Kita panggil list files di storage untuk folder dataset.slug
+    // 1. Bersihkan file storage dan thumbnails terlebih dahulu
     const { data: fileList, error: listError } = await supabase.storage
       .from('dataset-photos')
       .list(dataset.slug);
 
     if (!listError && fileList && fileList.length > 0) {
-      const pathsToDelete = fileList.map(file => `${dataset.slug}/${file.name}`);
-      await supabase.storage.from('dataset-photos').remove(pathsToDelete);
+      const pathsToDelete = [];
+      fileList.forEach(file => {
+        pathsToDelete.push(`${dataset.slug}/${file.name}`);
+      });
+      
+      // Hapus file thumbnails jika ada
+      const { data: thumbList } = await supabase.storage
+        .from('dataset-photos')
+        .list(`${dataset.slug}/thumbnails`);
+      
+      if (thumbList && thumbList.length > 0) {
+        thumbList.forEach(thumb => {
+          pathsToDelete.push(`${dataset.slug}/thumbnails/${thumb.name}`);
+        });
+      }
+
+      if (pathsToDelete.length > 0) {
+        await supabase.storage.from('dataset-photos').remove(pathsToDelete);
+      }
     }
 
     // 2. Hapus baris di PostgreSQL (Cascade delete akan otomatis menghapus di tabel photos)
     await deleteDataset(dataset.id);
     
-    toast.update('Dataset berhasil dihapus.', 'success');
+    toast.update('Dataset dan seluruh foto berhasil dihapus.', 'success');
     await loadData();
   } catch (error) {
     console.error('Error deleting dataset:', error);
