@@ -1641,3 +1641,14 @@ select.form-control {
 .mt-4 { margin-top: 16px; }
 .mb-4 { margin-bottom: 16px; }
 .d-none { display: none !important; }
+
+.shake-input {
+  animation: shake 0.4s ease;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-6px); }
+  40%, 80% { transform: translateX(6px); }
+}
+

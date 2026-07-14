@@ -179,9 +179,13 @@ async function loadPhotos() {
   }
 }
 
+import { protectAccess } from './auth.js';
+
 document.addEventListener('DOMContentLoaded', () => {
-  initPage();
-  setupEventListeners();
+  protectAccess(() => {
+    initPage();
+    setupEventListeners();
+  });
 });
 
 // Bersihkan camera stream jika berpindah halaman

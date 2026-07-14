@@ -69,9 +69,13 @@ async function loadData() {
   }
 }
 
+import { protectAccess } from './auth.js';
+
 document.addEventListener('DOMContentLoaded', () => {
-  loadData();
-  setupEventListeners();
+  protectAccess(() => {
+    loadData();
+    setupEventListeners();
+  });
 });
 
 /* ==========================================================================
